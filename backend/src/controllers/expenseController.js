@@ -1,4 +1,4 @@
-import supabase from "../config/config.js";
+import supabase, { supabaseAdmin } from "../config/config.js";
 import {
   nowIso,
   toDateOnly,
@@ -65,6 +65,9 @@ export const expenseController = {
   // Create expense
   async createExpense(req, res) {
     try {
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
       const { name, category, amount, date, method, notes, trend } = req.body;
       const normalizedName = typeof name === "string" ? name.trim() : "";
       const normalizedCategory = typeof category === "string" ? category.trim() : "";
@@ -88,6 +91,7 @@ export const expenseController = {
         .from("expenses")
         .insert([
           {
+            owner: req.user.id,
             name: normalizedName,
             category: normalizedCategory,
             amount: numericAmount,
@@ -143,7 +147,20 @@ export const expenseController = {
         updated_at: nowIso()
       });
 
-      const { data, error } = await supabase
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      // Verify ownership
+      const { data: existing } = await supabaseAdmin.from("expenses").select("owner").eq("id", id).single();
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Expense not found" });
+      }
+      if (existing.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to update this expense" });
+      }
+
+      const { data, error } = await supabaseAdmin
         .from("expenses")
         .update(updateData)
         .eq("id", id)
@@ -177,7 +194,20 @@ export const expenseController = {
     try {
       const { id } = req.params;
 
-      const { error } = await supabase.from("expenses").delete().eq("id", id);
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      // Verify ownership
+      const { data: existing } = await supabaseAdmin.from("expenses").select("owner").eq("id", id).single();
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Expense not found" });
+      }
+      if (existing.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to delete this expense" });
+      }
+
+      const { error } = await supabaseAdmin.from("expenses").delete().eq("id", id);
 
       if (error) {
         return res.status(400).json(errorPayload("Failed to delete expense", error));

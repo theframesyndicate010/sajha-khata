@@ -1,4 +1,4 @@
-import supabase from "../config/config.js";
+import supabase, { supabaseAdmin } from "../config/config.js";
 import {
   nowIso,
   toDateOnly,
@@ -17,7 +17,7 @@ const buildStatus = (paidTotal, totalAmount) => {
 };
 
 const fetchProjectWithPayments = async (projectId) => {
-  const { data: project } = await supabase
+  const { data: project } = await supabaseAdmin
     .from("projects")
     .select("*")
     .eq("id", projectId)
@@ -27,7 +27,7 @@ const fetchProjectWithPayments = async (projectId) => {
     return null;
   }
 
-  const { data: payments } = await supabase
+  const { data: payments } = await supabaseAdmin
     .from("project_payments")
     .select("*")
     .eq("project_id", projectId)
@@ -40,13 +40,18 @@ export const projectController = {
   // Get all projects
   async getAllProjects(req, res) {
     try {
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
       const { page, limit, offset } = parsePagination(req.query.page, req.query.limit, 50);
       const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const status = req.query.status;
 
-      let query = supabase
+      // Only return projects owned by the authenticated user
+      let query = supabaseAdmin
         .from("projects")
         .select("*", { count: "exact" })
+        .eq("owner", req.user.id)
         .range(offset, offset + limit - 1)
         .order("created_at", { ascending: false });
 
@@ -65,7 +70,7 @@ export const projectController = {
       }
 
       const projectIds = (data || []).map((item) => item.id);
-      const { data: payments } = await supabase
+      const { data: payments } = await supabaseAdmin
         .from("project_payments")
         .select("*")
         .in("project_id", projectIds.length ? projectIds : ["__none__"]);
@@ -109,13 +114,17 @@ export const projectController = {
         });
       }
 
-      const project = await fetchProjectWithPayments(id);
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
 
+      const project = await fetchProjectWithPayments(id);
       if (!project) {
-        return res.status(404).json({
-          success: false,
-          message: "Project not found"
-        });
+        return res.status(404).json({ success: false, message: "Project not found" });
+      }
+
+      if (project.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to view this project" });
       }
 
       return res.status(200).json({
@@ -131,6 +140,9 @@ export const projectController = {
   // Create project with initial payment
   async createProject(req, res) {
     try {
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
       const { client, project, totalAmount, paidAmount = 0, date, type, notes } = req.body;
       const normalizedClient = typeof client === "string" ? client.trim() : "";
       const normalizedProject = typeof project === "string" ? project.trim() : "";
@@ -152,10 +164,11 @@ export const projectController = {
       }
       const status = buildStatus(numericPaid, numericTotal);
 
-      const { data: createdProject, error: projectError } = await supabase
+      const { data: createdProject, error: projectError } = await supabaseAdmin
         .from("projects")
         .insert([
           {
+            owner: req.user.id,
             client: normalizedClient,
             project: normalizedProject,
             total_amount: numericTotal,
@@ -173,7 +186,7 @@ export const projectController = {
       }
 
       if (numericPaid > 0) {
-        const { error: paymentError } = await supabase.from("project_payments").insert([
+        const { error: paymentError } = await supabaseAdmin.from("project_payments").insert([
           {
             project_id: createdProject.id,
             amount: numericPaid,
@@ -228,7 +241,20 @@ export const projectController = {
         updated_at: nowIso()
       });
 
-      const { data, error } = await supabase
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      // Verify ownership
+      const { data: existing } = await supabaseAdmin.from("projects").select("owner").eq("id", id).single();
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Project not found" });
+      }
+      if (existing.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to update this project" });
+      }
+
+      const { data, error } = await supabaseAdmin
         .from("projects")
         .update(updateData)
         .eq("id", id)
@@ -264,9 +290,22 @@ export const projectController = {
     try {
       const { id } = req.params;
 
-      await supabase.from("project_payments").delete().eq("project_id", id);
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
 
-      const { error } = await supabase.from("projects").delete().eq("id", id);
+      // Verify ownership
+      const { data: existing } = await supabaseAdmin.from("projects").select("owner").eq("id", id).single();
+      if (!existing) {
+        return res.status(404).json({ success: false, message: "Project not found" });
+      }
+      if (existing.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to delete this project" });
+      }
+
+      await supabaseAdmin.from("project_payments").delete().eq("project_id", id);
+
+      const { error } = await supabaseAdmin.from("projects").delete().eq("id", id);
 
       if (error) {
         return res.status(400).json(errorPayload("Failed to delete project", error));
@@ -296,20 +335,26 @@ export const projectController = {
         });
       }
 
-      const { data: project, error: projectError } = await supabase
+
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      const { data: project, error: projectError } = await supabaseAdmin
         .from("projects")
-        .select("id, total_amount")
+        .select("id, total_amount, owner")
         .eq("id", id)
         .single();
 
       if (projectError || !project) {
-        return res.status(404).json({
-          success: false,
-          message: "Project not found"
-        });
+        return res.status(404).json({ success: false, message: "Project not found" });
       }
 
-      const { error: paymentError } = await supabase.from("project_payments").insert([
+      if (project.owner !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to record payment for this project" });
+      }
+
+      const { error: paymentError } = await supabaseAdmin.from("project_payments").insert([
         {
           project_id: id,
           amount: numericAmount,
@@ -324,7 +369,7 @@ export const projectController = {
         return res.status(400).json(errorPayload("Failed to record payment", paymentError));
       }
 
-      const { data: payments } = await supabase
+      const { data: payments } = await supabaseAdmin
         .from("project_payments")
         .select("amount")
         .eq("project_id", id);
@@ -332,7 +377,7 @@ export const projectController = {
       const paidTotal = sumAmounts(payments || []);
       const status = buildStatus(paidTotal, Number(project.total_amount));
 
-      await supabase
+      await supabaseAdmin
         .from("projects")
         .update({
           status,
