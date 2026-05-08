@@ -38,6 +38,11 @@ const validatePayload = (payload, rules, res, next) => {
       return;
     }
 
+    // For optional fields, treat empty string as not provided.
+    if (!required && typeof value === "string" && value.trim() === "") {
+      return;
+    }
+
     if (type === "string" && !isNonEmptyString(value)) {
       errors.push(`${field} must be a non-empty string`);
       return;

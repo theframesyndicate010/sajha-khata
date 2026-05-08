@@ -28,6 +28,29 @@ export default function OpExPage() {
     };
   }, []);
 
+  // Group expenses by category and calculate totals
+  const categoryTotals = React.useMemo(() => {
+    const totals = {};
+    expenses.forEach((expense) => {
+      if (!totals[expense.category]) {
+        totals[expense.category] = 0;
+      }
+      totals[expense.category] += expense.amount;
+    });
+    return totals;
+  }, [expenses]);
+
+  // Map categories to icons and colors
+  const getCategoryInfo = (category) => {
+    const map = {
+      "Cloud Hosting": { Icon: Cloud, color: "bg-blue-icon text-blue-600", description: "Total cloud & hosting costs" },
+      "Personnel": { Icon: Users, color: "bg-green-icon text-green-600", description: "Team salaries & benefits" },
+      "SaaS Tools": { Icon: CreditCard, color: "bg-amber-icon text-amber-600", description: "Software licenses & subscriptions" },
+      "Infrastructure (Cloud/Server)": { Icon: Server, color: "bg-blue-icon text-blue-600", description: "Server & infrastructure costs" }
+    };
+    return map[category] || { Icon: Server, color: "bg-gray-icon text-gray-600", description: category };
+  };
+
   const handleAdd = () => navigate("/opex-infrastructure/add");
 
   return (
@@ -49,38 +72,27 @@ export default function OpExPage() {
       </section>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="dash-card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-              <Cloud size={20} />
-            </div>
-            <span className="text-sm font-bold text-gray-500">Cloud Hosting</span>
+        {Object.entries(categoryTotals).length > 0 ? (
+          Object.entries(categoryTotals).map(([category, total]) => {
+            const { Icon, color } = getCategoryInfo(category);
+            return (
+              <div key={category} className="dash-card">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className={`p-2 rounded-lg ${color} bg-opacity-10`}>
+                    <Icon size={20} className={color.split(" ")[1]} />
+                  </div>
+                  <span className="text-sm font-bold text-gray-500">{category}</span>
+                </div>
+                <div className="text-2xl font-black">Rs. {total.toLocaleString()}</div>
+                <p className="text-xs text-gray-400 mt-1">{getCategoryInfo(category).description}</p>
+              </div>
+            );
+          })
+        ) : (
+          <div className="dash-card md:col-span-3 text-center py-8 text-gray-400">
+            <p>No expenses recorded yet. Click "Add Expense" to get started.</p>
           </div>
-          <div className="text-2xl font-black">Rs. 42,000</div>
-          <p className="text-xs text-gray-400 mt-1">Total AWS/Azure bill this month</p>
-        </div>
-
-        <div className="dash-card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-green-50 text-green-600 rounded-lg">
-              <Users size={20} />
-            </div>
-            <span className="text-sm font-bold text-gray-500">Personnel</span>
-          </div>
-          <div className="text-2xl font-black">Rs. 1,85,000</div>
-          <p className="text-xs text-gray-400 mt-1">Engineering and support salaries</p>
-        </div>
-
-        <div className="dash-card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
-              <CreditCard size={20} />
-            </div>
-            <span className="text-sm font-bold text-gray-500">SaaS Tools</span>
-          </div>
-          <div className="text-2xl font-black">Rs. 22,500</div>
-          <p className="text-xs text-gray-400 mt-1">Licenses for dev & PM tools</p>
-        </div>
+        )}
       </div>
 
       <div className="dash-card mt-6">

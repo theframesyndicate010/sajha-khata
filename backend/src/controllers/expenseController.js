@@ -1,227 +1,81 @@
 import supabase, { supabaseAdmin } from "../config/config.js";
-import {
-  nowIso,
-  toDateOnly,
-  parseNumber,
-  parsePagination,
-  stripUndefined,
-  errorPayload
-} from "./controllerUtils.js";
 
-export const expenseController = {
-  // Get expenses
-  async getAllExpenses(req, res) {
-    try {
-      const { page, limit, offset } = parsePagination(req.query.page, req.query.limit, 50);
-      const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-      const category = req.query.category;
-      const from = req.query.from;
-      const to = req.query.to;
+const getSupabase = (req) => req.supabase || req.app?.locals?.supabase || supabaseAdmin || supabase;
 
-      let query = supabase
-        .from("expenses")
-        .select("*", { count: "exact" })
-        .range(offset, offset + limit - 1)
-        .order("date", { ascending: false });
+const normalizeExpenseMethod = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
 
-      if (search) {
-        query = query.or(`name.ilike.%${search}%,notes.ilike.%${search}%`);
-      }
+  if (["card", "corporate card", "credit"].includes(normalized)) {
+    return "card";
+  }
 
-      if (category) {
-        query = query.eq("category", category);
-      }
+  if (["bank", "bank transfer", "cash", "upi", "online"].includes(normalized)) {
+    return "bank";
+  }
 
-      if (from) {
-        query = query.gte("date", from);
-      }
+  return normalized;
+};
 
-      if (to) {
-        query = query.lte("date", to);
-      }
+export const listExpenses = async (req, res) => {
+  const sb = getSupabase(req);
 
-      const { data, error, count } = await query;
+  try {
+    const { data, error } = await sb
+      .from("expenses")
+      .select("*")
+      .eq("user_id", req.user.id)
+      .order("date", { ascending: false });
 
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to fetch expenses", error));
-      }
-
-      return res.status(200).json({
-        success: true,
-        data,
-        pagination: {
-          page,
-          limit,
-          total: count,
-          pages: Math.ceil(count / limit)
-        }
+    if (error) {
+      return res.status(500).json({
+        message: error.message
       });
-    } catch (error) {
-      console.error("Get expenses error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
     }
-  },
 
-  // Create expense
-  async createExpense(req, res) {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ success: false, message: "User not authenticated" });
-      }
-      const { name, category, amount, date, method, notes, trend } = req.body;
-      const normalizedName = typeof name === "string" ? name.trim() : "";
-      const normalizedCategory = typeof category === "string" ? category.trim() : "";
-      const numericAmount = parseNumber(amount);
-
-      if (!normalizedName || !normalizedCategory || numericAmount === null) {
-        return res.status(400).json({
-          success: false,
-          message: "Name, category, and amount are required"
-        });
-      }
-
-      if (numericAmount < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Amount must be a positive number"
-        });
-      }
-
-      const { data, error } = await supabase
-        .from("expenses")
-        .insert([
-          {
-            owner: req.user.id,
-            name: normalizedName,
-            category: normalizedCategory,
-            amount: numericAmount,
-            date: toDateOnly(date),
-            method: method || null,
-            notes: notes || null,
-            trend: trend || "0%",
-            created_at: nowIso(),
-            updated_at: nowIso()
-          }
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to create expense", error));
-      }
-
-      return res.status(201).json({
-        success: true,
-        message: "Expense recorded successfully",
-        data
-      });
-    } catch (error) {
-      console.error("Create expense error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
-  },
-
-  // Update expense
-  async updateExpense(req, res) {
-    try {
-      const { id } = req.params;
-      const { name, category, amount, date, method, notes, trend } = req.body;
-
-      const numericAmount = amount !== undefined ? parseNumber(amount) : undefined;
-
-      if (amount !== undefined && numericAmount === null) {
-        return res.status(400).json({
-          success: false,
-          message: "Amount must be a number"
-        });
-      }
-
-      const updateData = stripUndefined({
-        name: typeof name === "string" ? name.trim() : undefined,
-        category: typeof category === "string" ? category.trim() : undefined,
-        amount: numericAmount,
-        date,
-        method,
-        notes,
-        trend,
-        updated_at: nowIso()
-      });
-
-      if (!req.user) {
-        return res.status(401).json({ success: false, message: "User not authenticated" });
-      }
-
-      // Verify ownership
-      const { data: existing } = await supabaseAdmin.from("expenses").select("owner").eq("id", id).single();
-      if (!existing) {
-        return res.status(404).json({ success: false, message: "Expense not found" });
-      }
-      if (existing.owner !== req.user.id) {
-        return res.status(403).json({ success: false, message: "Unauthorized to update this expense" });
-      }
-
-      const { data, error } = await supabaseAdmin
-        .from("expenses")
-        .update(updateData)
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to update expense", error));
-      }
-
-      if (!data) {
-        return res.status(404).json({
-          success: false,
-          message: "Expense not found"
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "Expense updated successfully",
-        data
-      });
-    } catch (error) {
-      console.error("Update expense error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
-  },
-
-  // Delete expense
-  async deleteExpense(req, res) {
-    try {
-      const { id } = req.params;
-
-      if (!req.user) {
-        return res.status(401).json({ success: false, message: "User not authenticated" });
-      }
-
-      // Verify ownership
-      const { data: existing } = await supabaseAdmin.from("expenses").select("owner").eq("id", id).single();
-      if (!existing) {
-        return res.status(404).json({ success: false, message: "Expense not found" });
-      }
-      if (existing.owner !== req.user.id) {
-        return res.status(403).json({ success: false, message: "Unauthorized to delete this expense" });
-      }
-
-      const { error } = await supabaseAdmin.from("expenses").delete().eq("id", id);
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to delete expense", error));
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "Expense deleted successfully"
-      });
-    } catch (error) {
-      console.error("Delete expense error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
+    return res.json({
+      data: data || []
+    });
+  } catch (error) {
+    console.error("List expenses error:", error);
+    return res.status(500).json({
+      message: "Failed to load expenses"
+    });
   }
 };
 
-export default expenseController;
+export const createExpense = async (req, res) => {
+  const sb = getSupabase(req);
+  const payload = {
+    name: req.body.name,
+    category: req.body.category,
+    amount: Number(req.body.amount),
+    date: req.body.date,
+    method: normalizeExpenseMethod(req.body.method),
+    notes: req.body.notes || null,
+    trend: req.body.trend || "0%",
+    user_id: req.user.id
+  };
+
+  try {
+    const { data, error } = await sb
+      .from("expenses")
+      .insert([payload])
+      .select("*")
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        message: error.message
+      });
+    }
+
+    return res.status(201).json({
+      data
+    });
+  } catch (error) {
+    console.error("Create expense error:", error);
+    return res.status(500).json({
+      message: "Failed to create expense"
+    });
+  }
+};

@@ -75,8 +75,8 @@ export default function ProfitsPage() {
       <div className="max-w-4xl mx-auto w-full space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="dash-card bg-blue-600 text-white p-4">
-            <span className="text-[10px] font-bold uppercase opacity-70">Net Profit Pool</span>
-            <div className="text-xl font-black">Rs. {availableProfit.toLocaleString()}</div>
+            <span className="text-[10px] font-bold uppercase text-green-600">Net Profit Pool</span>
+            <div className="text-xl font-black text-green-700">Rs. {availableProfit.toLocaleString()}</div>
           </div>
           <div className="dash-card border-green-100 bg-green-50/50 p-4">
             <span className="text-[10px] font-bold uppercase text-green-600">Total Distributed</span>

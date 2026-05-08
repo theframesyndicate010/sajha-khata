@@ -1,4 +1,4 @@
-import supabase from "../config/config.js";
+import supabase, { createSupabaseUserClient, supabaseAdmin } from "../config/config.js";
 
 const requireAuth = async (req, res, next) => {
   try {
@@ -19,7 +19,8 @@ const requireAuth = async (req, res, next) => {
       });
     }
 
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const authClient = supabaseAdmin || supabase;
+    const { data: { user }, error } = await authClient.auth.getUser(token);
 
     if (error || !user) {
       return res.status(401).json({
@@ -30,6 +31,7 @@ const requireAuth = async (req, res, next) => {
 
     req.user = user;
     req.accessToken = token;
+    req.supabase = createSupabaseUserClient(token);
     return next();
   } catch (error) {
     console.error("Auth middleware error:", error);

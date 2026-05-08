@@ -10,7 +10,7 @@ export default function AddExpensePage() {
     category: "Infrastructure (Cloud/Server)",
     amount: "",
     date: new Date().toISOString().split("T")[0],
-    method: "Corporate Card",
+    method: "card",
     notes: ""
   });
 
@@ -124,10 +124,8 @@ export default function AddExpensePage() {
                   onChange={handleChange}
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all bg-white"
                 >
-                  <option>Corporate Card</option>
-                  <option>Bank Transfer</option>
-                  <option>Cash</option>
-                  <option>Credit</option>
+                  <option value="card">Corporate Card</option>
+                  <option value="bank">Bank Transfer</option>
                 </select>
               </div>
             </div>

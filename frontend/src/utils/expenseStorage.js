@@ -1,12 +1,22 @@
 import { fetchJson } from "./apiClient";
 
+const formatMethod = (method) => {
+  if (method === "card") {
+    return "Corporate Card";
+  }
+  if (method === "bank") {
+    return "Bank Transfer";
+  }
+  return method;
+};
+
 const mapExpense = (expense) => ({
   id: expense.id,
   name: expense.name,
   category: expense.category,
   amount: Number(expense.amount) || 0,
   date: expense.date,
-  method: expense.method,
+  method: formatMethod(expense.method),
   notes: expense.notes,
   trend: expense.trend || "0%"
 });

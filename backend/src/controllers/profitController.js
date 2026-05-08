@@ -1,134 +1,93 @@
-import supabase from "../config/config.js";
-import { nowIso, toDateOnly, sumAmounts, parseNumber, errorPayload } from "./controllerUtils.js";
+import supabase, { supabaseAdmin } from "../config/config.js";
 
-const fetchTotals = async () => {
-  const [paymentsResult, expensesResult] = await Promise.all([
-    supabase.from("project_payments").select("amount"),
-    supabase.from("expenses").select("amount")
-  ]);
+const getSupabase = (req) => req.supabase || req.app?.locals?.supabase || supabaseAdmin || supabase;
 
-  const paymentRows = paymentsResult.data || [];
-  const expenseRows = expensesResult.data || [];
+const buildSummary = async (sb, userId) => {
+  const [{ data: payments, error: paymentError }, { data: expenses, error: expenseError }, { data: distributions, error: distError }] =
+    await Promise.all([
+      sb
+        .from("project_payments")
+        .select("amount")
+        .eq("user_id", userId),
+      sb
+        .from("expenses")
+        .select("amount")
+        .eq("user_id", userId),
+      sb
+        .from("profit_distributions")
+        .select("*")
+        .eq("user_id", userId)
+        .order("date", { ascending: false })
+    ]);
 
-  const revenue = sumAmounts(paymentRows || []);
-  const expenses = sumAmounts(expenseRows || []);
+  if (paymentError) {
+    throw paymentError;
+  }
+  if (expenseError) {
+    throw expenseError;
+  }
+  if (distError) {
+    throw distError;
+  }
+
+  const totalRevenue = (payments || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const totalExpenses = (expenses || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const available = totalRevenue - totalExpenses;
 
   return {
-    revenue,
-    expenses,
-    available: revenue - expenses
+    available,
+    distributions: distributions || []
   };
 };
 
-export const profitController = {
-  // Get profit summary with distributions
-  async getProfitSummary(req, res) {
-    try {
-      const totals = await fetchTotals();
+export const getProfitSummary = async (req, res) => {
+  const sb = getSupabase(req);
 
-      const { data: distributions, error } = await supabase
-        .from("profit_distributions")
-        .select("*")
-        .order("date", { ascending: false });
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to fetch distributions", error));
-      }
-
-      return res.status(200).json({
-        success: true,
-        data: {
-          available: totals.available,
-          distributions: distributions || []
-        }
-      });
-    } catch (error) {
-      console.error("Get profit summary error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
-  },
-
-  // Record distributions
-  async recordDistributions(req, res) {
-    try {
-      const { distributions } = req.body;
-
-      if (!Array.isArray(distributions) || distributions.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Distributions are required"
-        });
-      }
-
-      const payload = distributions.map((item) => {
-        const owner = typeof item.owner === "string" ? item.owner.trim() : "";
-        const amount = parseNumber(item.amount) ?? 0;
-
-        return {
-          owner,
-          amount,
-          method: item.method || "Bank Transfer",
-          date: toDateOnly(item.date),
-          created_at: nowIso()
-        };
-      });
-
-      const hasInvalid = payload.some((item) => !item.owner || item.amount <= 0);
-      if (hasInvalid) {
-        return res.status(400).json({
-          success: false,
-          message: "Each distribution must include an owner and positive amount"
-        });
-      }
-
-      const { data, error } = await supabase
-        .from("profit_distributions")
-        .insert(payload)
-        .select();
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to record distributions", error));
-      }
-
-      const totals = await fetchTotals();
-
-      return res.status(201).json({
-        success: true,
-        message: "Distributions recorded successfully",
-        data: {
-          available: totals.available,
-          distributions: data || []
-        }
-      });
-    } catch (error) {
-      console.error("Record distributions error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
-  },
-
-  // Delete a distribution
-  async deleteDistribution(req, res) {
-    try {
-      const { id } = req.params;
-
-      const { error } = await supabase
-        .from("profit_distributions")
-        .delete()
-        .eq("id", id);
-
-      if (error) {
-        return res.status(400).json(errorPayload("Failed to delete distribution", error));
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "Distribution deleted successfully"
-      });
-    } catch (error) {
-      console.error("Delete distribution error:", error);
-      return res.status(500).json(errorPayload("Internal server error", error));
-    }
+  try {
+    const summary = await buildSummary(sb, req.user.id);
+    return res.json({
+      data: summary
+    });
+  } catch (error) {
+    console.error("Get profits error:", error);
+    return res.status(500).json({
+      message: "Failed to load profits"
+    });
   }
 };
 
-export default profitController;
+export const recordDistributions = async (req, res) => {
+  const sb = getSupabase(req);
+  const today = new Date().toISOString().split("T")[0];
+
+  const payload = (req.body.distributions || []).map((dist) => ({
+    owner: dist.owner,
+    amount: Number(dist.amount),
+    method: dist.method,
+    date: dist.date || today,
+    user_id: req.user.id
+  }));
+
+  try {
+    const { error } = await sb
+      .from("profit_distributions")
+      .insert(payload);
+
+    if (error) {
+      return res.status(500).json({
+        message: error.message
+      });
+    }
+
+    const summary = await buildSummary(sb, req.user.id);
+
+    return res.json({
+      data: summary
+    });
+  } catch (error) {
+    console.error("Record distributions error:", error);
+    return res.status(500).json({
+      message: "Failed to record distributions"
+    });
+  }
+};
